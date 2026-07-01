@@ -2861,6 +2861,41 @@ mod impl_rand {
     impl_uniform_sampler! { f32 }
     impl_uniform_sampler! { f64 }
 
+    // `rand::distr::weighted::Weight` (used by `WeightedIndex`) lives behind rand's
+    // `alloc` feature, which our `std` feature enables.
+    #[cfg(feature = "std")]
+    mod impl_weight {
+        use super::{NotNan, OrderedFloat};
+        use core::ops::AddAssign;
+        use num_traits::float::FloatCore;
+        use num_traits::ConstZero;
+        use rand::distr::weighted::Weight;
+
+        impl<T: FloatCore + ConstZero + AddAssign> Weight for OrderedFloat<T> {
+            const ZERO: Self = OrderedFloat(T::ZERO);
+
+            fn checked_add_assign(&mut self, v: &Self) -> Result<(), ()> {
+                self.0 += v.0;
+                Ok(())
+            }
+        }
+
+        impl<T: FloatCore + ConstZero + AddAssign> Weight for NotNan<T> {
+            const ZERO: Self = unsafe { NotNan::new_unchecked(T::ZERO) };
+
+            fn checked_add_assign(&mut self, v: &Self) -> Result<(), ()> {
+                let mut sum = self.0;
+                sum += v.0;
+                if sum.is_nan() {
+                    Err(())
+                } else {
+                    self.0 = sum;
+                    Ok(())
+                }
+            }
+        }
+    }
+
     #[cfg(all(test, feature = "randtest"))]
     mod tests {
         use super::*;
@@ -2922,6 +2957,30 @@ mod impl_rand {
             let (low, high) = (OrderedFloat(0f64), OrderedFloat(f64::NAN));
             let uniform = Uniform::new(low, high).expect("Should panic");
             let _ = uniform.sample(&mut rand::rng());
+        }
+
+        #[test]
+        #[cfg(feature = "std")]
+        fn weighted_index_supports_notnan_and_ordered_weights() {
+            use rand::distr::weighted::WeightedIndex;
+
+            let mut rng = rand::rng();
+
+            let weights = [
+                NotNan::new(0.0).unwrap(),
+                NotNan::new(1.0).unwrap(),
+                NotNan::new(3.0).unwrap(),
+            ];
+            let dist = WeightedIndex::new(weights).unwrap();
+            for _ in 0..32 {
+                assert_ne!(dist.sample(&mut rng), 0, "zero-weight index was picked");
+            }
+
+            let weights = [OrderedFloat(0.0), OrderedFloat(1.0), OrderedFloat(3.0)];
+            let dist = WeightedIndex::new(weights).unwrap();
+            for _ in 0..32 {
+                assert_ne!(dist.sample(&mut rng), 0, "zero-weight index was picked");
+            }
         }
     }
 }
