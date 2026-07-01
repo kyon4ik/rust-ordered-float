@@ -2864,6 +2864,7 @@ mod impl_rand {
     #[cfg(all(test, feature = "randtest"))]
     mod tests {
         use super::*;
+        use rand::RngExt;
 
         fn sample_fuzz<T>()
         where
